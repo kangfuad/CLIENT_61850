@@ -1,0 +1,68 @@
+{
+    "global_config": {
+        "polling_interval": 5,
+        "log_level": "INFO"
+    },
+    "simulators": [
+        {
+            "id": "simulator_local_1",
+            "datapoints": [
+                {
+                    "reference": "CSWI_IEDCSWI_Control/CSWI1.Pos.stVal",
+                    "type": "status",
+                    "description": "Switch Position Status",
+                    "enabled": true
+                },
+                {
+                    "reference": "CSWI_IEDCSWI_Control/CSWI1.Loc.stVal",
+                    "type": "status",
+                    "description": "Local Control Status",
+                    "enabled": true
+                }
+            ]
+        },
+        {
+            "id": "simulator_local_2",
+            "datapoints": [
+                {
+                    "reference": "MMXU_IEDMeasurements/MMXU1.A.phsA.cVal.mag.f",
+                    "type": "measurement",
+                    "description": "Phase A Current Magnitude",
+                    "enabled": true,
+                    "unit": "A"
+                },
+                {
+                    "reference": "MMXU_IEDMeasurements/MMXU1.PhV.phsA.cVal.mag.f",
+                    "type": "measurement",
+                    "description": "Phase A Voltage Magnitude",
+                    "enabled": true,
+                    "unit": "V"
+                }
+            ]
+        },
+        {
+            "id": "simulator_local_3",
+            "datapoints": [
+                {
+                    "reference": "MMXU_IEDMeasurements/MMXU1.Hz.mag.f",
+                    "type": "measurement",
+                    "description": "Frequency Measurement",
+                    "enabled": true,
+                    "unit": "Hz"
+                }
+            ]
+        },
+        {
+            "id": "simulator_local_4",
+            "datapoints": [
+                {
+                    "reference": "IED1_XCBRGenericIO/XCBR1.Pos.stVal",
+                    "type": "MEAS",
+                    "description": "Frequency MEAS",
+                    "enabled": true,
+                    "unit": "Hz"
+                }
+            ]
+        }
+    ]
+}

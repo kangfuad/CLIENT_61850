@@ -1,0 +1,16 @@
+2025-02-12 11:47:06,140 - __main__ - INFO - Mencoba operasi SELECT
+2025-02-12 11:47:06,189 - libiec61850client - INFO -   DS: SwitchControls, not Deletable
+2025-02-13 19:36:18,635 - __main__ - INFO - Mencoba operasi SELECT
+2025-02-13 19:36:18,671 - libiec61850client - INFO -   DS: SwitchControls, not Deletable
+2025-02-13 19:45:26,807 - __main__ - INFO - Mencoba operasi SELECT
+2025-02-13 19:45:26,836 - libiec61850client - INFO -   DS: SwitchControls, not Deletable
+2025-02-13 19:48:48,446 - __main__ - INFO - Mencoba koneksi ke 127.0.0.1:10102
+2025-02-13 19:48:48,446 - __main__ - ERROR - Error saat koneksi: 'iec61850client' object has no attribute 'connect'
+2025-02-13 19:48:48,447 - __main__ - ERROR - Gagal membuat koneksi ke IED
+2025-02-13 19:53:26,726 - __main__ - INFO - Mencoba koneksi ke 127.0.0.1:10102
+2025-02-13 19:53:26,727 - __main__ - ERROR - Error saat koneksi: 'iec61850client' object has no attribute 'connect'
+2025-02-13 19:53:26,727 - __main__ - ERROR - Gagal membuat koneksi ke IED
+2025-02-13 19:54:58,204 - __main__ - INFO - Mencoba koneksi ke 127.0.0.1:10102
+2025-02-13 19:54:58,205 - __main__ - ERROR - Error saat koneksi: 'iec61850client' object has no attribute 'connect'
+2025-02-13 19:54:58,205 - __main__ - ERROR - Gagal membuat koneksi ke IED
+2025-02-13 23:42:13,039 - libiec61850client - INFO -   DS: SwitchControls, not Deletable

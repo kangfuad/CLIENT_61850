@@ -1,0 +1,5 @@
+# confluent-kafka
+kafka-python
+python-dotenv
+psycopg2-binary
+flask
