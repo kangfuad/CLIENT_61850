@@ -24,28 +24,28 @@
         "id": "simulator_local_4",
         "ip": "10.14.152.233",
         "port": 10102,
-        "enabled": true,
+        "enabled": false,
         "description": "Local IED Simulator 4"
     },
     {
         "id": "simulator_local_5",
         "ip": "10.14.152.233",
         "port": 10103,
-        "enabled": true,
+        "enabled": false,
         "description": "Local IED Simulator 5"
     },
     {
         "id": "simulator_local_6",
         "ip": "10.14.152.233",
         "port": 10104,
-        "enabled": true,
+        "enabled": false,
         "description": "Local IED Simulator 6"
     },
     {
         "id": "simulator_local_7",
         "ip": "10.14.152.233",
         "port": 10105,
-        "enabled": true,
+        "enabled": false,
         "description": "Local IED Simulator 7"
     }
 ]

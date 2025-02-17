@@ -27,6 +27,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+logging.getLogger('kafka').setLevel(logging.WARNING)
 
 # Queue untuk menyimpan data yang diterima
 data_queue = queue.Queue()
@@ -34,9 +35,8 @@ data_queue = queue.Queue()
 print(f"BOOTSTRAP_SERVER: {os.getenv('BOOTSTRAP_SERVER')}")
 
 consumer = KafkaMessageConsumer(
-        bootstrap_servers=os.getenv('BOOTSTRAP_SERVER', 'localhost:9092'),
-        topic='61850_COMAND',
-        group_id='dev61850-2'
+        topic='DATAPOINTS',
+        group_id='dev61850'
     )
 
 producer = KafkaProducerService()
@@ -615,17 +615,17 @@ if __name__ == "__main__":
         threads.append(main_thread)
 
         # 7. Sekarang kita bisa jalankan kode lain (misal database) karena consumer sudah tidak blocking
-        print("Menjalankan operasi database...")
+        # print("Menjalankan operasi database...")
         db = DatabaseConnector()
         db.connect()
 
-        # Contoh query database
-        select_query = "SELECT * FROM app limit 1;"
-        messages = db.execute_query(select_query, return_result=True)
-        if messages:
-            print("📝 Data dari database:")
-            for msg in messages:
-                print(f"ID: {msg[0]}, Content: {msg[1]}, Timestamp: {msg[2]}")
+        # # Contoh query database
+        # select_query = "SELECT * FROM app limit 1;"
+        # messages = db.execute_query(select_query, return_result=True)
+        # if messages:
+        #     print("📝 Data dari database:")
+        #     for msg in messages:
+        #         print(f"ID: {msg[0]}, Content: {msg[1]}, Timestamp: {msg[2]}")
 
         # 8. Buat program tetap berjalan sampai ada CTRL+C
         print("Program berjalan... (Tekan CTRL+C untuk berhenti)")
