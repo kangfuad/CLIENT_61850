@@ -1,41 +1,35 @@
 import signal
 import logging
-from typing import Optional
+from typing import List, Optional, Union
 from .kafka_connection import KafkaConnectionManager
 
 class KafkaMessageConsumer:
-    def __init__(self, topic: str, group_id: str):
+    def __init__(self, topics: Union[str, List[str]], group_id: str):
+        """
+        Inisialisasi consumer dengan support multi-topik
         
-        self.topic = topic
+        :param topics: Satu topik atau daftar topik
+        :param group_id: Group ID untuk consumer
+        """
+        # Konversi topik tunggal menjadi list jika diperlukan
+        self.topics = [topics] if isinstance(topics, str) else topics
         self.group_id = group_id
         self.is_running = True
         
         self.logger = logging.getLogger(__name__)
         self.connection_manager = KafkaConnectionManager()
-        self.consumer = self.connection_manager.get_consumer(topic, group_id)
         
-        signal.signal(signal.SIGINT, self._handle_signal)
-        signal.signal(signal.SIGTERM, self._handle_signal)
+        # Buat consumer dengan multi-topik
+        self.consumer = self.connection_manager.get_consumer(
+            topics=self.topics,  # Gunakan list topik
+            group_id=group_id
+        )
         
-    def _handle_signal(self, signum, frame):
-        """Handle termination signals"""
-        self.is_running = False
-        self.shutdown()
-
-    def process_message(self, message):
-        """Process each message - override this method for custom processing"""
-        try:
-            # Add your custom processing logic here
-            # Example:
-            # if message.value.get('event') == 'COMMAND':
-            #     return self._handle_command(message.value)
-            return True
-        except Exception as e:
-            self.logger.error(f"Processing error: {str(e)}")
-            return False
+        # Tambahkan signal handlers
+        self._setup_signal_handlers()
 
     def start_consuming(self):
-        """Start consuming messages from Kafka"""
+        """Start consuming messages from multiple Kafka topics"""
         if not self.consumer:
             self.logger.error("No Kafka connection available")
             return
@@ -49,16 +43,82 @@ class KafkaMessageConsumer:
 
                 for topic_partition, messages in message_batch.items():
                     for message in messages:
-                        self.process_message(message)
+                        # Tambahkan informasi topik ke pesan
+                        processed_message = {
+                            'topic': topic_partition.topic,
+                            'value': message.value
+                        }
+                        self.process_message(processed_message)
 
         except Exception as e:
             self.logger.error(f"Consumer error: {str(e)}")
         finally:
             self.shutdown()
 
+    def process_message(self, message):
+        """
+        Proses pesan dari berbagai topik
+        
+        :param message: Pesan dengan informasi topik
+        """
+        try:
+            # Log pesan yang diterima untuk debugging
+            self.logger.info(f"Menerima pesan dari topik {message.get('topic')}")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Processing error untuk topik {message.get('topic')}: {str(e)}")
+            return False
+
     def shutdown(self):
         """Clean shutdown of consumer"""
-        self.connection_manager.close_consumer(self.topic, self.group_id)
+        try:
+            self.logger.info("Memulai proses shutdown consumer...")
+            self.is_running = False
+            
+            # Tutup consumer
+            if self.consumer:
+                self.connection_manager.close_consumer(self.topics, self.group_id)
+            
+            self.logger.info("Shutdown consumer berhasil")
+        except Exception as e:
+            self.logger.error(f"Error saat shutdown consumer: {e}")
+
+    def _process_datapoints(self, message):
+        """Proses pesan dari topik DATAPOINTS"""
+        # Implementasi spesifik untuk DATAPOINTS
+        self.logger.info(f"Memproses datapoint: {message}")
+        return True
+
+    def _process_ied_control(self, message):
+        """Proses pesan dari topik IED_CONTROL"""
+        # Implementasi spesifik untuk IED_CONTROL
+        self.logger.info(f"Memproses kontrol IED: {message}")
+        return True
+
+    def _process_connection_state(self, message):
+        """Proses pesan dari topik IED_CONNECTION_STATE"""
+        # Implementasi spesifik untuk IED_CONNECTION_STATE
+        self.logger.info(f"Memproses state koneksi: {message}")
+        return True
+
+    def _setup_signal_handlers(self):
+        """
+        Setup signal handlers untuk menangani interrupt
+        """
+        signal.signal(signal.SIGINT, self._handle_signal)
+        signal.signal(signal.SIGTERM, self._handle_signal)
+
+    def _handle_signal(self, signum, frame):
+        """
+        Handle termination signals
+        
+        :param signum: Nomor sinyal
+        :param frame: Current stack frame
+        """
+        self.logger.info(f"Menerima sinyal {signum}. Memulai proses shutdown...")
+        self.is_running = False
+        self.shutdown()
 
 # if __name__ == "__main__":
 #     # Example usage with connection manager

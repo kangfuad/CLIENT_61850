@@ -1,3 +1,4 @@
+from enum import Enum, auto
 import json
 import logging
 import os
@@ -32,14 +33,200 @@ logging.getLogger('kafka').setLevel(logging.WARNING)
 # Queue untuk menyimpan data yang diterima
 data_queue = queue.Queue()
 
-print(f"BOOTSTRAP_SERVER: {os.getenv('BOOTSTRAP_SERVER')}")
-
 consumer = KafkaMessageConsumer(
-        topic='DATAPOINTS',
-        group_id='dev61850'
-    )
+    topics=['IED_CONTROL'],
+    group_id='dev61850'
+)
 
 producer = KafkaProducerService()
+
+class IEDConnection:
+    def __init__(self, client, ied, datapoint_config):
+        """
+        Inisialisasi koneksi IED
+        """
+        self.client = client
+        self.ied = ied
+        self.datapoint_config = datapoint_config
+        self.host = ied['ip']
+        self.port = ied['port']
+        self.references_to_register = self._get_references()
+
+        self.current_state = IEDConnectionState.DISCONNECTED
+
+        # Konfigurasi polling individual
+        self.polling_config = ied.get('polling', {
+            'enabled': True,
+            'interval': 5000,
+            'mode': 'periodic'
+        })
+        
+        # Validasi konfigurasi polling
+        self.polling_enabled = self.polling_config.get('enabled', True)
+        self.polling_interval = max(1000, self.polling_config.get('interval', 5000))
+        self.polling_mode = self.polling_config.get('mode', 'periodic')
+        
+    def _get_references(self):
+        """
+        Dapatkan referensi datapoint yang diaktifkan
+        """
+        # Cari datapoint untuk IED spesifik ini
+        ied_datapoints = next(
+            (sim['datapoints'] for sim in self.datapoint_config.get('simulators', []) 
+            if sim['id'] == self.ied.get('id')), 
+            []
+        )
+        
+        # Gunakan datapoint yang diaktifkan
+        return [
+            f"iec61850://{self.host}:{self.port}/{dp['reference']}" 
+            for dp in ied_datapoints if dp.get('enabled', False)
+        ]
+
+    def update_state(self, new_state):
+        """
+        Update state koneksi dengan thread-safe
+        """
+        if self.current_state != new_state:
+            self.current_state = new_state
+            # Tambahkan logging atau notifikasi jika diperlukan
+            logger.info(f"IED {self.host}:{self.port} state berubah menjadi {new_state.name}")
+    
+    def check_and_reconnect(self):
+        """
+        Metode untuk mencoba reconnect secara otomatis
+        """
+        if (self.current_state == IEDConnectionState.ERROR or 
+            self.current_state == IEDConnectionState.DISCONNECTED):
+            
+            logger.info(f"Mencoba reconnect ke IED {self.host}:{self.port}")
+            return self.connect_and_register()
+        
+        return False
+
+    def connect_and_register(self):
+        """
+        Lakukan koneksi dan registrasi datapoint
+        """
+        try:
+            # Dapatkan model data
+            model = self.client.getDatamodel(hostname=self.host, port=self.port)
+            
+            if not model:
+                logger.warning(f"Tidak dapat mendapatkan model dari {self.host}:{self.port}")
+                return False
+
+            logger.info(f"Berhasil mendapatkan model dari {self.host}:{self.port}")
+            
+            # Ekstrak dan mapping data model
+            extract_and_map_model_data(
+                self.client, 
+                model, 
+                self.host, 
+                self.port
+            )
+            
+            # Registrasi referensi untuk pembacaan SEKALI
+            for ref in self.references_to_register:
+                try:
+                    result = self.client.registerReadValue(ref)
+                    if result == 0:
+                        logger.info(f"Berhasil registrasi: {ref}")
+                    else:
+                        logger.warning(f"Gagal registrasi: {ref}")
+                except Exception as reg_error:
+                    logger.error(f"Error saat registrasi {ref}: {reg_error}")
+            
+            return True
+        
+        except Exception as e:
+            logger.error(f"Error saat koneksi dan registrasi IED {self.host}:{self.port}: {e}")
+            return False
+
+class IEDControlManager:
+    def __init__(self, client: iec61850client, logger: Optional[logging.Logger] = None):
+        """
+        Inisialisasi manager kontrol untuk IED
+        
+        :param client: Klien IEC 61850
+        :param logger: Logger kustom (opsional)
+        """
+        self.client = client
+        self.logger = logger or logging.getLogger(__name__)
+
+    def select(self, ref: str, value: str) -> Tuple[bool, Optional[str]]:
+        """
+        Melakukan operasi select pada objek kontrol
+
+        :param ref: Referensi lengkap objek kontrol (iec61850://host:port/referensi)
+        :param value: Nilai untuk select
+        :return: Tuple (status keberhasilan, pesan tambahan)
+        """
+        try:
+            # Panggil method select dari client
+            error, add_cause = self.client.select(ref, value)
+            
+            if error == 1:
+                self.logger.info(f"Berhasil select {ref} dengan nilai {value}")
+                return True, None
+            else:
+                self.logger.error(f"Gagal select {ref}. Penyebab: {add_cause}")
+                return False, add_cause
+        
+        except Exception as e:
+            self.logger.error(f"Error saat select {ref}: {e}")
+            return False, str(e)
+
+    def operate(self, ref: str, value: str) -> Tuple[bool, Optional[str]]:
+        """
+        Melakukan operasi operate pada objek kontrol
+
+        :param ref: Referensi lengkap objek kontrol (iec61850://host:port/referensi)
+        :param value: Nilai untuk operate
+        :return: Tuple (status keberhasilan, pesan tambahan)
+        """
+        try:
+            # Panggil method operate dari client
+            error, add_cause = self.client.operate(ref, value)
+            
+            if error == 1:
+                self.logger.info(f"Berhasil operate {ref} dengan nilai {value}")
+                return True, None
+            else:
+                self.logger.error(f"Gagal operate {ref}. Penyebab: {add_cause}")
+                return False, add_cause
+        
+        except Exception as e:
+            self.logger.error(f"Error saat operate {ref}: {e}")
+            return False, str(e)
+
+    def cancel(self, ref: str) -> Tuple[bool, Optional[str]]:
+        """
+        Melakukan operasi cancel pada objek kontrol
+
+        :param ref: Referensi lengkap objek kontrol (iec61850://host:port/referensi)
+        :return: Tuple (status keberhasilan, pesan tambahan)
+        """
+        try:
+            # Panggil method cancel dari client
+            error = self.client.cancel(ref)
+            
+            if error == 1:
+                self.logger.info(f"Berhasil cancel {ref}")
+                return True, None
+            else:
+                self.logger.error(f"Gagal cancel {ref}")
+                return False, "Operasi cancel gagal"
+        
+        except Exception as e:
+            self.logger.error(f"Error saat cancel {ref}: {e}")
+            return False, str(e)
+        
+class IEDConnectionState(Enum):
+    DISCONNECTED = auto()
+    CONNECTING = auto()
+    CONNECTED = auto()
+    ERROR = auto()
 
 def run_consumer():
     consumer.start_consuming()
@@ -268,190 +455,91 @@ def extract_and_map_model_data(client, model, host, port):
     end_time = time.time()
     logger.debug(f"Model mapping selesai dalam {end_time - start_time:.4f} detik")
 
-class IEDConnection:
-    def __init__(self, client, ied, datapoint_config):
-        """
-        Inisialisasi koneksi IED
-        """
-        self.client = client
-        self.ied = ied
-        self.datapoint_config = datapoint_config
-        self.host = ied['ip']
-        self.port = ied['port']
-        self.references_to_register = self._get_references()
-        
-    def _get_references(self):
-        """
-        Dapatkan referensi datapoint yang diaktifkan
-        """
-        # Cari datapoint untuk IED spesifik ini
-        ied_datapoints = next(
-            (sim['datapoints'] for sim in self.datapoint_config.get('simulators', []) 
-            if sim['id'] == self.ied.get('id')), 
-            []
-        )
-        
-        # Gunakan datapoint yang diaktifkan
-        return [
-            f"iec61850://{self.host}:{self.port}/{dp['reference']}" 
-            for dp in ied_datapoints if dp.get('enabled', False)
-        ]
-
-    def connect_and_register(self):
-        """
-        Lakukan koneksi dan registrasi datapoint
-        """
-        try:
-            # Dapatkan model data
-            model = self.client.getDatamodel(hostname=self.host, port=self.port)
-            
-            if not model:
-                logger.warning(f"Tidak dapat mendapatkan model dari {self.host}:{self.port}")
-                return False
-
-            logger.info(f"Berhasil mendapatkan model dari {self.host}:{self.port}")
-            
-            # Ekstrak dan mapping data model
-            extract_and_map_model_data(
-                self.client, 
-                model, 
-                self.host, 
-                self.port
-            )
-            
-            # Registrasi referensi untuk pembacaan SEKALI
-            for ref in self.references_to_register:
-                try:
-                    result = self.client.registerReadValue(ref)
-                    if result == 0:
-                        logger.info(f"Berhasil registrasi: {ref}")
-                    else:
-                        logger.warning(f"Gagal registrasi: {ref}")
-                except Exception as reg_error:
-                    logger.error(f"Error saat registrasi {ref}: {reg_error}")
-            
-            return True
-        
-        except Exception as e:
-            logger.error(f"Error saat koneksi dan registrasi IED {self.host}:{self.port}: {e}")
-            return False
-
-class IEDControlManager:
-    def __init__(self, client: iec61850client, logger: Optional[logging.Logger] = None):
-        """
-        Inisialisasi manager kontrol untuk IED
-        
-        :param client: Klien IEC 61850
-        :param logger: Logger kustom (opsional)
-        """
-        self.client = client
-        self.logger = logger or logging.getLogger(__name__)
-
-    def select(self, ref: str, value: str) -> Tuple[bool, Optional[str]]:
-        """
-        Melakukan operasi select pada objek kontrol
-
-        :param ref: Referensi lengkap objek kontrol (iec61850://host:port/referensi)
-        :param value: Nilai untuk select
-        :return: Tuple (status keberhasilan, pesan tambahan)
-        """
-        try:
-            # Panggil method select dari client
-            error, add_cause = self.client.select(ref, value)
-            
-            if error == 1:
-                self.logger.info(f"Berhasil select {ref} dengan nilai {value}")
-                return True, None
-            else:
-                self.logger.error(f"Gagal select {ref}. Penyebab: {add_cause}")
-                return False, add_cause
-        
-        except Exception as e:
-            self.logger.error(f"Error saat select {ref}: {e}")
-            return False, str(e)
-
-    def operate(self, ref: str, value: str) -> Tuple[bool, Optional[str]]:
-        """
-        Melakukan operasi operate pada objek kontrol
-
-        :param ref: Referensi lengkap objek kontrol (iec61850://host:port/referensi)
-        :param value: Nilai untuk operate
-        :return: Tuple (status keberhasilan, pesan tambahan)
-        """
-        try:
-            # Panggil method operate dari client
-            error, add_cause = self.client.operate(ref, value)
-            
-            if error == 1:
-                self.logger.info(f"Berhasil operate {ref} dengan nilai {value}")
-                return True, None
-            else:
-                self.logger.error(f"Gagal operate {ref}. Penyebab: {add_cause}")
-                return False, add_cause
-        
-        except Exception as e:
-            self.logger.error(f"Error saat operate {ref}: {e}")
-            return False, str(e)
-
-    def cancel(self, ref: str) -> Tuple[bool, Optional[str]]:
-        """
-        Melakukan operasi cancel pada objek kontrol
-
-        :param ref: Referensi lengkap objek kontrol (iec61850://host:port/referensi)
-        :return: Tuple (status keberhasilan, pesan tambahan)
-        """
-        try:
-            # Panggil method cancel dari client
-            error = self.client.cancel(ref)
-            
-            if error == 1:
-                self.logger.info(f"Berhasil cancel {ref}")
-                return True, None
-            else:
-                self.logger.error(f"Gagal cancel {ref}")
-                return False, "Operasi cancel gagal"
-        
-        except Exception as e:
-            self.logger.error(f"Error saat cancel {ref}: {e}")
-            return False, str(e)
-        
 def ied_polling_thread(ied_connection):
     """
-    Thread untuk polling data dari satu IED
+    Thread untuk polling data dari satu IED dengan konfigurasi flexible
     """
     while True:
         try:
-            # Periksa polling global
-            if GLOBAL_POLLING_ENABLED:
-                logger.debug(f"Polling aktif untuk IED {ied_connection.host}:{ied_connection.port}")
-                
-                # Dapatkan model data terbaru
-                model = ied_connection.client.getDatamodel(
-                    hostname=ied_connection.host, 
-                    port=ied_connection.port
+            # Tentukan apakah polling diizinkan
+            is_polling_allowed = (
+                GLOBAL_POLLING_ENABLED and 
+                ied_connection.polling_config.get('enabled', True)
+            )
+
+            if is_polling_allowed:
+                # Log detail polling
+                logger.debug(
+                    f"Polling aktif untuk IED {ied_connection.host}:{ied_connection.port} "
+                    f"- Interval: {ied_connection.polling_config.get('interval', POLLING_INTERVAL)}ms "
+                    f"- Status: {ied_connection.current_state.name}"
                 )
                 
-                if model:
-                    # Ekstrak dan mapping data model
-                    extract_and_map_model_data(
-                        ied_connection.client, 
-                        model, 
-                        ied_connection.host, 
-                        ied_connection.port
+                # Periksa status koneksi
+                if ied_connection.current_state != IEDConnectionState.CONNECTED:
+                    logger.warning(
+                        f"IED {ied_connection.host}:{ied_connection.port} "
+                        f"tidak terkoneksi. Status: {ied_connection.current_state.name}. "
+                        "Mencoba reconnect..."
                     )
-                else:
-                    logger.warning(f"Gagal mendapatkan model untuk {ied_connection.host}:{ied_connection.port}")
+                    
+                    # Coba reconnect
+                    ied_connection.check_and_reconnect()
+                    time.sleep(10)  # Tunggu sebelum mencoba lagi
+                    continue
+
+                # Dapatkan model data terbaru
+                try:
+                    model = ied_connection.client.getDatamodel(
+                        hostname=ied_connection.host, 
+                        port=ied_connection.port
+                    )
+                    
+                    if model:
+                        # Ekstrak dan mapping data model
+                        extract_and_map_model_data(
+                            ied_connection.client, 
+                            model, 
+                            ied_connection.host, 
+                            ied_connection.port
+                        )
+                    else:
+                        logger.warning(
+                            f"Gagal mendapatkan model untuk "
+                            f"{ied_connection.host}:{ied_connection.port}"
+                        )
+                    
+                    # Polling data
+                    ied_connection.client.poll()
                 
-                # Polling data
-                ied_connection.client.poll()
+                except Exception as model_error:
+                    # Update state ke ERROR jika gagal
+                    ied_connection.update_state(IEDConnectionState.ERROR)
+                    logger.error(
+                        f"Error saat mendapatkan model/polling IED "
+                        f"{ied_connection.host}:{ied_connection.port}: {model_error}"
+                    )
             else:
-                logger.debug(f"Polling non-aktif. Hanya mengandalkan RCB.")
+                logger.debug(
+                    f"Polling non-aktif untuk IED {ied_connection.host}:{ied_connection.port}. "
+                    "Hanya mengandalkan RCB."
+                )
             
-            # Konversi milliseconds ke seconds untuk time.sleep()
-            time.sleep(POLLING_INTERVAL / 1000)
+            # Gunakan interval spesifik IED atau global
+            polling_interval = ied_connection.polling_config.get('interval', POLLING_INTERVAL)
+            
+            # Pastikan interval minimal 1 detik
+            polling_interval = max(1000, polling_interval)
+            
+            # Tunggu sesuai interval
+            time.sleep(polling_interval / 1000)
         
         except Exception as e:
-            logger.error(f"Error saat polling IED {ied_connection.host}:{ied_connection.port}: {e}")
+            logger.error(
+                f"Error tidak terduga saat polling IED "
+                f"{ied_connection.host}:{ied_connection.port}: {e}"
+            )
+            
             # Tunggu sebentar sebelum mencoba lagi
             time.sleep(10)
 
@@ -508,27 +596,41 @@ def main():
     def ied_polling_thread(ied_connection):
         while not stop_event.is_set():  # Cek apakah sudah diberi sinyal stop
             try:
-                if GLOBAL_POLLING_ENABLED:
-                    logger.debug(f"Polling aktif untuk IED {ied_connection.host}:{ied_connection.port}")
-                    model = ied_connection.client.getDatamodel(
-                        hostname=ied_connection.host, 
-                        port=ied_connection.port
-                    )
-                    
-                    if model:
-                        extract_and_map_model_data(
-                            ied_connection.client, 
-                            model, 
-                            ied_connection.host, 
-                            ied_connection.port
-                        )
-                    else:
-                        logger.warning(f"Gagal mendapatkan model untuk {ied_connection.host}:{ied_connection.port}")
-                    
-                    ied_connection.client.poll()
+                # Periksa apakah polling diaktifkan untuk IED ini
+                if not ied_connection.polling_enabled:
+                    logger.info(f"Polling dinonaktifkan untuk IED {ied_connection.host}:{ied_connection.port}")
+                    stop_event.wait(60)  # Tunggu 1 menit sebelum memeriksa ulang
+                    continue
+
+                # Periksa state sebelum polling
+                if ied_connection.current_state != IEDConnectionState.CONNECTED:
+                    # Coba reconnect jika tidak terkoneksi
+                    ied_connection.check_and_reconnect()
+                    stop_event.wait(10)  # Tunggu sebelum mencoba lagi
+                    continue
+
+                # Polling sesuai konfigurasi IED
+                logger.debug(f"Polling IED {ied_connection.host}:{ied_connection.port} - Interval: {ied_connection.polling_interval}ms")
                 
-                # Gunakan stop_event.wait() sebagai pengganti time.sleep()
-                stop_event.wait(POLLING_INTERVAL / 1000)
+                # Dapatkan model data
+                model = ied_connection.client.getDatamodel(
+                    hostname=ied_connection.host, 
+                    port=ied_connection.port
+                )
+                
+                if model:
+                    extract_and_map_model_data(
+                        ied_connection.client, 
+                        model, 
+                        ied_connection.host, 
+                        ied_connection.port
+                    )
+                
+                # Polling data
+                ied_connection.client.poll()
+                
+                # Gunakan interval spesifik IED
+                stop_event.wait(ied_connection.polling_interval / 1000)
                 
             except Exception as e:
                 logger.error(f"Error saat polling IED {ied_connection.host}:{ied_connection.port}: {e}")
@@ -545,6 +647,11 @@ def main():
     try:
         # Buat koneksi dan thread polling untuk setiap IED
         for ied in ied_configs:
+            polling_config = ied.get('polling', {})
+            logger.info(f"Konfigurasi Polling untuk IED {ied['id']}:")
+            logger.info(f"  Enabled: {polling_config.get('enabled', True)}")
+            logger.info(f"  Interval: {polling_config.get('interval', 5000)} ms")
+            logger.info(f"  Mode: {polling_config.get('mode', 'periodic')}")
             ied_connection = IEDConnection(client, ied, datapoint_config)
             
             if ied_connection.connect_and_register():

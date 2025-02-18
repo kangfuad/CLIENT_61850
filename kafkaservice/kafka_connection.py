@@ -2,7 +2,7 @@ import os
 import json
 from kafka import KafkaProducer, KafkaConsumer
 import logging
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 
 class KafkaConnectionManager:
     _instance = None
@@ -48,9 +48,18 @@ class KafkaConnectionManager:
                 return None
         return self._producer
 
-    def get_consumer(self, topic: str, group_id: str, **kwargs) -> Optional[KafkaConsumer]:
-        """Get or create Kafka consumer instance for specific topic and group"""
-        consumer_key = f"{topic}_{group_id}"
+    def get_consumer(self, topics: Union[str, List[str]], group_id: str, **kwargs) -> Optional[KafkaConsumer]:
+        """
+        Get or create Kafka consumer instance for specific topics and group
+        
+        :param topics: Satu topik atau daftar topik
+        :param group_id: Group ID konsumer
+        """
+        # Konversi topik tunggal menjadi list
+        topics = [topics] if isinstance(topics, str) else topics
+        
+        # Buat kunci unik untuk konsumer
+        consumer_key = f"{'-'.join(topics)}_{group_id}"
         
         if consumer_key not in self._consumers:
             try:
@@ -65,15 +74,17 @@ class KafkaConnectionManager:
                 }
                 
                 self._consumers[consumer_key] = KafkaConsumer(
-                    topic,
+                    *topics,  # Gunakan unpacking untuk multi-topik
                     **consumer_config
                 )
-                self.logger.info(f"Kafka consumer connection established for {topic}")
+                self.logger.info(f"Kafka consumer connection established for topics: {topics}")
             except Exception as e:
-                self.logger.error(f"Failed to create Kafka consumer for {topic}: {str(e)}")
+                self.logger.error(f"Failed to create Kafka consumer for topics {topics}: {str(e)}")
                 return None
                 
         return self._consumers[consumer_key]
+
+
 
     def close_producer(self):
         """Close producer connection if exists"""
@@ -86,16 +97,26 @@ class KafkaConnectionManager:
             except Exception as e:
                 self.logger.error(f"Error closing producer: {str(e)}")
 
-    def close_consumer(self, topic: str, group_id: str):
-        """Close specific consumer connection if exists"""
-        consumer_key = f"{topic}_{group_id}"
+    def close_consumer(self, topics: Union[str, List[str]], group_id: str):
+        """
+        Close specific consumer connection
+        
+        :param topics: Satu topik atau daftar topik
+        :param group_id: Group ID konsumer
+        """
+        # Konversi topik tunggal menjadi list
+        topics = [topics] if isinstance(topics, str) else topics
+        
+        # Buat kunci unik untuk konsumer
+        consumer_key = f"{'-'.join(topics)}_{group_id}"
+        
         if consumer_key in self._consumers:
             try:
                 self._consumers[consumer_key].close()
                 del self._consumers[consumer_key]
-                self.logger.info(f"Kafka consumer connection closed for {topic}")
+                self.logger.info(f"Kafka consumer connection closed for topics: {topics}")
             except Exception as e:
-                self.logger.error(f"Error closing consumer for {topic}: {str(e)}")
+                self.logger.error(f"Error closing consumer for topics {topics}: {str(e)}")
 
     def close_all(self):
         """Close all Kafka connections"""
