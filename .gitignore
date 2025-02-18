@@ -1,3 +1,4 @@
 DEBUG/
 _TEMP/
 __pycache__/
+.env
